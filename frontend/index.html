@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <!-- SEO Meta Tags -->
+    <meta name="description" content="Kanya Raasi - Your AI-powered weight loss and nutrition coach. Get personalized diet advice, workout recommendations, and health guidance.">
+    <meta name="keywords" content="weight loss, AI coach, nutrition, diet, fitness, health, personal trainer">
+    <meta name="author" content="Kanya Raasi">
+    
+    <!-- Open Graph for Social Sharing -->
+    <meta property="og:title" content="Kanya Raasi - AI Health Coach">
+    <meta property="og:description" content="Get personalized weight loss and nutrition advice from your AI health coach.">
+    <meta property="og:type" content="website">
+    
+    <title>Kanya Raasi - AI Health Coach</title>
+    
+    <!-- Google Fonts - Inter for modern typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Main Stylesheet -->
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- 
+        Main Application Container
+        Uses CSS Grid for responsive layout
+    -->
+    <div id="app" class="app-container">
+        
+        <!-- 
+            HEADER SECTION
+            Contains: Logo, Title, Theme Toggle, Action Buttons
+            Sticky positioned for always-visible navigation
+        -->
+        <header class="header" role="banner">
+            <div class="header-left">
+                <!-- Logo with health/fitness icon -->
+                <div class="logo">
+                    <span class="logo-icon">🏋️</span>
+                    <div class="logo-text">
+                        <h1>Kanya Raasi</h1>
+                        <span class="tagline">AI Health Coach</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="header-right">
+                <!-- API Status Indicator - Shows if backend is connected -->
+                <div class="status-indicator" id="statusIndicator" title="API Status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Connecting...</span>
+                </div>
+                
+                <!-- Theme Toggle Button -->
+                <button 
+                    class="btn btn-icon" 
+                    id="themeToggle" 
+                    title="Toggle Dark/Light Mode"
+                    aria-label="Toggle theme"
+                >
+                    <span class="icon-sun">☀️</span>
+                    <span class="icon-moon">🌙</span>
+                </button>
+                
+                <!-- New Chat Button -->
+                <button 
+                    class="btn btn-secondary" 
+                    id="newChatBtn"
+                    title="Start a new conversation"
+                >
+                    <span>+ New Chat</span>
+                </button>
+                
+                <!-- More Options Dropdown -->
+                <div class="dropdown" id="moreDropdown">
+                    <button class="btn btn-icon" id="moreBtn" aria-label="More options">
+                        ⋮
+                    </button>
+                    <div class="dropdown-menu" id="dropdownMenu">
+                        <button class="dropdown-item" id="exportChatBtn">
+                            📥 Export Chat
+                        </button>
+                        <button class="dropdown-item" id="clearHistoryBtn">
+                            🗑️ Clear History
+                        </button>
+                        <hr class="dropdown-divider">
+                        <button class="dropdown-item" id="settingsBtn">
+                            ⚙️ Settings
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- 
+            MAIN CHAT AREA
+            This is where messages are displayed
+            Uses flexbox for message layout with auto-scroll
+        -->
+        <main class="chat-container" role="main">
+            <!-- 
+                Messages Container
+                Each message is dynamically inserted here
+                aria-live for screen reader announcements
+            -->
+            <div 
+                class="messages" 
+                id="messagesContainer" 
+                role="log" 
+                aria-live="polite"
+                aria-label="Chat messages"
+            >
+                <!-- Welcome Message - Shown on first load -->
+                <div class="welcome-screen" id="welcomeScreen">
+                    <div class="welcome-icon">🌿</div>
+                    <h2>Welcome to Kanya Raasi</h2>
+                    <p>Your AI-powered health and nutrition coach</p>
+                    
+                    <!-- Quick Start Suggestions -->
+                    <div class="suggestions">
+                        <p class="suggestions-label">Try asking:</p>
+                        <div class="suggestion-chips">
+                            <button class="chip" data-query="What should I eat to lose weight?">
+                                🥗 What should I eat to lose weight?
+                            </button>
+                            <button class="chip" data-query="How much protein do I need daily?">
+                                🥩 How much protein do I need daily?
+                            </button>
+                            <button class="chip" data-query="Best exercises for fat loss?">
+                                💪 Best exercises for fat loss?
+                            </button>
+                            <button class="chip" data-query="How to maintain calorie deficit?">
+                                📊 How to maintain calorie deficit?
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Messages will be dynamically inserted here -->
+            </div>
+            
+            <!-- 
+                Scroll to Bottom Button
+                Appears when user scrolls up in long conversations
+            -->
+            <button 
+                class="scroll-bottom-btn hidden" 
+                id="scrollBottomBtn"
+                aria-label="Scroll to latest message"
+            >
+                ↓ New messages
+            </button>
+        </main>
+
+        <!-- 
+            INPUT SECTION
+            Contains: Text input, Send button, Character counter
+            Sticky at bottom of viewport
+        -->
+        <footer class="input-section" role="contentinfo">
+            <!-- Error Banner - Shows API errors -->
+            <div class="error-banner hidden" id="errorBanner">
+                <span class="error-icon">⚠️</span>
+                <span class="error-message" id="errorMessage"></span>
+                <button class="error-close" id="errorClose" aria-label="Dismiss error">×</button>
+            </div>
+            
+            <form class="input-form" id="chatForm">
+                <div class="input-wrapper">
+                    <!-- 
+                        Auto-expanding Textarea
+                        - Grows with content up to max height
+                        - Supports Shift+Enter for new lines
+                        - Enter key sends message
+                    -->
+                    <textarea
+                        id="messageInput"
+                        class="message-input"
+                        placeholder="Ask me about nutrition, exercise, or weight loss..."
+                        rows="1"
+                        maxlength="2000"
+                        aria-label="Type your message"
+                        autocomplete="off"
+                    ></textarea>
+                    
+                    <!-- Character Counter -->
+                    <div class="input-footer">
+                        <span class="char-counter" id="charCounter">0 / 2000</span>
+                        
+                        <!-- Send Button -->
+                        <button 
+                            type="submit" 
+                            class="btn btn-primary send-btn" 
+                            id="sendBtn"
+                            disabled
+                            aria-label="Send message"
+                        >
+                            <span class="send-icon">➤</span>
+                            <span class="send-text">Send</span>
+                        </button>
+                    </div>
+                </div>
+            </form>
+            
+            <!-- Disclaimer -->
+            <p class="disclaimer">
+                AI can make mistakes. Always consult healthcare professionals for medical advice.
+            </p>
+        </footer>
+    </div>
+
+    <!-- 
+        SETTINGS MODAL
+        Configurable options like API URL, theme, etc.
+    -->
+    <div class="modal-overlay hidden" id="settingsModal">
+        <div class="modal" role="dialog" aria-labelledby="settingsTitle">
+            <div class="modal-header">
+                <h2 id="settingsTitle">⚙️ Settings</h2>
+                <button class="modal-close" id="closeSettingsBtn" aria-label="Close settings">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <label for="apiUrlInput">API URL</label>
+                    <input 
+                        type="url" 
+                        id="apiUrlInput" 
+                        class="setting-input"
+                        placeholder="http://localhost:8000"
+                    >
+                    <small class="setting-help">The URL where your FastAPI backend is running</small>
+                </div>
+                
+                <div class="setting-group">
+                    <label for="numSourcesInput">Number of Sources (k)</label>
+                    <input 
+                        type="number" 
+                        id="numSourcesInput" 
+                        class="setting-input"
+                        min="1"
+                        max="10"
+                        value="5"
+                    >
+                    <small class="setting-help">How many relevant documents to retrieve (1-10)</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelSettingsBtn">Cancel</button>
+                <button class="btn btn-primary" id="saveSettingsBtn">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 
+        CONFIRMATION MODAL
+        Used for destructive actions like clearing history
+    -->
+    <div class="modal-overlay hidden" id="confirmModal">
+        <div class="modal modal-small" role="alertdialog" aria-labelledby="confirmTitle">
+            <div class="modal-header">
+                <h2 id="confirmTitle">Confirm Action</h2>
+            </div>
+            <div class="modal-body">
+                <p id="confirmMessage">Are you sure you want to continue?</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="confirmCancelBtn">Cancel</button>
+                <button class="btn btn-danger" id="confirmOkBtn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 
+        LOADING OVERLAY
+        Shown during initial app load
+    -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loader">
+            <div class="loader-spinner"></div>
+            <p>Loading Kanya Raasi...</p>
+        </div>
+    </div>
+
+    <!-- JavaScript Modules - Loaded in order of dependencies -->
+    <script src="js/utils.js"></script>      <!-- Utility functions first -->
+    <script src="js/storage.js"></script>    <!-- Storage depends on utils -->
+    <script src="js/api.js"></script>        <!-- API depends on utils -->
+    <script src="js/app.js"></script>        <!-- Main app depends on all above -->
+</body>
+</html>
