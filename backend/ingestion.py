@@ -2,21 +2,7 @@ import os
 import warnings
 import sys
 
-# Suppress Python 3.12 multiprocess ResourceTracker bug (harmless cleanup error)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-try:
-    from multiprocess.resource_tracker import ResourceTracker
-    if hasattr(ResourceTracker, '__del__'):
-        original_del = ResourceTracker.__del__
-        def patched_del(self):
-            try:
-                original_del(self)
-            except AttributeError:
-                pass
-        ResourceTracker.__del__ = patched_del
-except (ImportError, AttributeError):
-    pass
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter

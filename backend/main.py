@@ -1,21 +1,7 @@
 import os
 import warnings
 
-# Suppress Python 3.12 multiprocess ResourceTracker bug (harmless cleanup error)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-# Patch ResourceTracker to ignore the Python 3.12 bug
-try:
-    from multiprocess.resource_tracker import ResourceTracker
-    original_del = ResourceTracker.__del__
-    def patched_del(self):
-        try:
-            original_del(self)
-        except AttributeError:
-            pass  # Ignore Python 3.12 multiprocess bug
-    ResourceTracker.__del__ = patched_del
-except ImportError:
-    pass
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
