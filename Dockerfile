@@ -17,11 +17,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend source
 COPY backend/ ./backend/
 
-# Copy pre-built vector store (generated locally by running ingest)
-# This avoids re-ingesting on every deploy
-COPY backend/chroma_db/ ./backend/chroma_db/
+# Copy startup script
+COPY backend/start.sh ./backend/
 
-# Copy PDF data (needed if re-ingestion is triggered at runtime)
+# Copy PDF data for ingestion on startup
 COPY data/ ./data/
 
 # Copy frontend (served as static files by FastAPI at /app)
@@ -32,6 +31,9 @@ RUN chown -R appuser:appuser /app
 
 WORKDIR /app/backend
 
+# Make startup script executable
+RUN chmod +x start.sh
+
 USER appuser
 
 ENV PYTHONUNBUFFERED=1
@@ -39,4 +41,4 @@ ENV ENV=production
 
 EXPOSE 8000
 
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./start.sh"]
