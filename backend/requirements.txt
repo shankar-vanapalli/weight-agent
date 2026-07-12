@@ -9,7 +9,6 @@ fastapi==0.139.0
 uvicorn==0.51.0
 python-dotenv==1.2.2
 openai==2.45.0
-sentence-transformers==5.6.0
 datasets==5.0.0
 slowapi==0.1.10
 duckduckgo-search==8.1.1

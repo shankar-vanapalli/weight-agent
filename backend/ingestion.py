@@ -7,7 +7,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from datasets import load_dataset
 from langchain_core.documents import Document
 from dotenv import load_dotenv
@@ -31,12 +31,16 @@ _openrouter_client = None
 
 
 def get_embeddings():
-    """Return a cached HuggingFace embeddings model (singleton)."""
+    """Return a cached OpenAI-compatible embeddings client (singleton, no local model)."""
     global _embeddings_model
     if _embeddings_model is None:
-        logger.info("Loading embeddings model (first call)...")
-        _embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        logger.info("Embeddings model cached.")
+        logger.info("Initialising embeddings via OpenRouter...")
+        _embeddings_model = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+            openai_api_base="https://openrouter.ai/api/v1",
+        )
+        logger.info("Embeddings client ready.")
     return _embeddings_model
 
 
