@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: kanya-raasi
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false          # Render will prompt you to enter this manually (never in repo)
+      - key: ENV
+        value: production
+      - key: WORKERS
+        value: "1"           # Free tier is single-instance
+      - key: LOG_LEVEL
+        value: WARNING
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "30"
+      - key: ENABLE_WEB_SEARCH
+        value: "true"
+      - key: LLM_MODEL
+        value: google/gemini-2.5-flash
+      - key: ALLOWED_ORIGINS
+        value: "*"           # Same-origin — frontend served from same server, CORS not needed

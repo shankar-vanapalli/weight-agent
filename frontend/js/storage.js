@@ -24,15 +24,16 @@
 // ════════════════════════════════════════════════════════════════
 
 const STORAGE_KEYS = {
-    MESSAGES: 'kanyaraasi_messages',
+    SESSIONS: 'kanyaraasi_sessions',       // { [id]: { id, title, createdAt, updatedAt } }
+    MESSAGES: 'kanyaraasi_msgs_',          // prefix + sessionId => message[]
+    ACTIVE_SESSION: 'kanyaraasi_active',   // currently open session id
     SETTINGS: 'kanyaraasi_settings',
     THEME: 'kanyaraasi_theme',
     LAST_ACTIVE: 'kanyaraasi_last_active'
 };
 
-// Default settings
 const DEFAULT_SETTINGS = {
-    apiUrl: 'http://localhost:8000',
+    apiUrl: '',
     numSources: 5,
     autoScroll: true,
     soundEnabled: false
@@ -160,77 +161,118 @@ function handleStorageQuotaExceeded(currentKey) {
 
 
 // ════════════════════════════════════════════════════════════════
-// MESSAGE STORAGE
+// SESSION MANAGEMENT
 // ════════════════════════════════════════════════════════════════
 
-/**
- * Get all stored messages
- * @returns {Array} - Array of message objects
- */
-function getMessages() {
-    return getItem(STORAGE_KEYS.MESSAGES, []);
+function getSessions() {
+    return getItem(STORAGE_KEYS.SESSIONS, {});
 }
 
-/**
- * Save all messages (replaces existing)
- * @param {Array} messages - Array of message objects
- * @returns {boolean} - Success status
- */
-function saveMessages(messages) {
-    // Validate messages array
-    if (!Array.isArray(messages)) {
-        console.error('saveMessages: messages must be an array');
-        return false;
-    }
-
-    // Limit to last 500 messages to prevent storage overflow
-    const maxMessages = 500;
-    const trimmedMessages = messages.slice(-maxMessages);
-
-    return setItem(STORAGE_KEYS.MESSAGES, trimmedMessages);
+function saveSessions(sessions) {
+    return setItem(STORAGE_KEYS.SESSIONS, sessions);
 }
 
-/**
- * Add a single message to storage
- * @param {Object} message - Message object with role, content, timestamp
- * @returns {boolean} - Success status
- */
-function addMessage(message) {
-    // Validate message object
-    if (!message || typeof message !== 'object') {
-        console.error('addMessage: invalid message object');
-        return false;
-    }
+function getActiveSessionId() {
+    return getItem(STORAGE_KEYS.ACTIVE_SESSION, null);
+}
 
-    // Ensure required fields
-    const validatedMessage = {
+function setActiveSessionId(id) {
+    return setItem(STORAGE_KEYS.ACTIVE_SESSION, id);
+}
+
+function createSession(title) {
+    const id = 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    const session = { id, title: title || 'New chat', createdAt: Date.now(), updatedAt: Date.now() };
+    const sessions = getSessions();
+    sessions[id] = session;
+    saveSessions(sessions);
+    setActiveSessionId(id);
+    return session;
+}
+
+function updateSessionTitle(sessionId, title) {
+    const sessions = getSessions();
+    if (sessions[sessionId]) {
+        sessions[sessionId].title = title;
+        sessions[sessionId].updatedAt = Date.now();
+        saveSessions(sessions);
+    }
+}
+
+function deleteSession(sessionId) {
+    const sessions = getSessions();
+    delete sessions[sessionId];
+    saveSessions(sessions);
+    removeItem(STORAGE_KEYS.MESSAGES + sessionId);
+    if (getActiveSessionId() === sessionId) {
+        const remaining = Object.keys(sessions);
+        setActiveSessionId(remaining.length > 0 ? remaining[remaining.length - 1] : null);
+    }
+}
+
+function getSessionList() {
+    const sessions = getSessions();
+    return Object.values(sessions).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// MESSAGE STORAGE (session-scoped)
+// ════════════════════════════════════════════════════════════════
+
+function getMessages(sessionId) {
+    if (!sessionId) return [];
+    return getItem(STORAGE_KEYS.MESSAGES + sessionId, []);
+}
+
+function saveMessages(sessionId, messages) {
+    if (!sessionId || !Array.isArray(messages)) return false;
+    const trimmed = messages.slice(-300);
+    // Auto-update session updatedAt
+    const sessions = getSessions();
+    if (sessions[sessionId]) {
+        sessions[sessionId].updatedAt = Date.now();
+        saveSessions(sessions);
+    }
+    return setItem(STORAGE_KEYS.MESSAGES + sessionId, trimmed);
+}
+
+function addMessage(sessionId, message) {
+    if (!message || typeof message !== 'object') return false;
+    const validated = {
         id: message.id || Utils.generateId('msg'),
         role: message.role || 'user',
         content: message.content || '',
         timestamp: message.timestamp || Date.now(),
         sources: message.sources || []
     };
-
-    const messages = getMessages();
-    messages.push(validatedMessage);
-
-    return saveMessages(messages);
+    const messages = getMessages(sessionId);
+    messages.push(validated);
+    return saveMessages(sessionId, messages);
 }
 
-/**
- * Clear all messages
- * @returns {boolean} - Success status
- */
-function clearMessages() {
-    return removeItem(STORAGE_KEYS.MESSAGES);
+function clearMessages(sessionId) {
+    if (!sessionId) return false;
+    return saveMessages(sessionId, []);
 }
 
-/**
- * Get message count
- * @returns {number}
- */
-function getMessageCount() {
-    return getMessages().length;
+function updateMessage(sessionId, messageId, updatedMessage) {
+    const messages = getMessages(sessionId);
+    const index = messages.findIndex(m => m.id === messageId);
+    if (index !== -1) {
+        messages[index] = updatedMessage;
+        return saveMessages(sessionId, messages);
+    }
+    return false;
+}
+
+function deleteMessage(sessionId, messageId) {
+    const messages = getMessages(sessionId);
+    return saveMessages(sessionId, messages.filter(m => m.id !== messageId));
+}
+
+function getMessageCount(sessionId) {
+    return getMessages(sessionId).length;
 }
 
 
@@ -457,10 +499,21 @@ window.Storage = {
     setItem,
     removeItem,
 
-    // Messages
+    // Sessions
+    getSessions,
+    createSession,
+    updateSessionTitle,
+    deleteSession,
+    getSessionList,
+    getActiveSessionId,
+    setActiveSessionId,
+
+    // Messages (session-scoped)
     getMessages,
     saveMessages,
     addMessage,
+    updateMessage,
+    deleteMessage,
     clearMessages,
     getMessageCount,
 
@@ -479,7 +532,7 @@ window.Storage = {
     // Sync
     setupStorageSync,
 
-    // Session
+    // Session tracking
     updateLastActive,
     getLastActive,
     isNewSession,

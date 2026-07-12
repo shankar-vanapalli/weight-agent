@@ -22,11 +22,12 @@
 // ════════════════════════════════════════════════════════════════
 
 const AppState = {
-    isLoading: false,           // Is the AI currently generating a response?
-    messages: [],               // In-memory message cache
-    currentRequestId: null,     // Track current request for cancellation
-    isScrolledToBottom: true,   // Is the user at the bottom of chat?
-    typingIndicatorId: null     // ID of typing indicator element
+    isLoading: false,
+    messages: [],               // Messages for the CURRENT session only
+    currentSessionId: null,     // Active session ID
+    currentRequestId: null,
+    isScrolledToBottom: true,
+    typingIndicatorId: null
 };
 
 
@@ -46,22 +47,18 @@ const Elements = {
     get scrollBottomBtn() { return Utils.$('#scrollBottomBtn'); },
     get statusIndicator() { return Utils.$('#statusIndicator'); },
     get themeToggle() { return Utils.$('#themeToggle'); },
-    get newChatBtn() { return Utils.$('#newChatBtn'); },
+    get sidebarNewChatBtn() { return Utils.$('#sidebarNewChatBtn'); },
+    get sidebarList() { return Utils.$('#sidebarList'); },
+    get sidebar() { return Utils.$('#sidebar'); },
+    get sidebarToggle() { return Utils.$('#sidebarToggle'); },
     get moreDropdown() { return Utils.$('#moreDropdown'); },
     get moreBtn() { return Utils.$('#moreBtn'); },
     get dropdownMenu() { return Utils.$('#dropdownMenu'); },
     get exportChatBtn() { return Utils.$('#exportChatBtn'); },
     get clearHistoryBtn() { return Utils.$('#clearHistoryBtn'); },
-    get settingsBtn() { return Utils.$('#settingsBtn'); },
     get errorBanner() { return Utils.$('#errorBanner'); },
     get errorMessage() { return Utils.$('#errorMessage'); },
     get errorClose() { return Utils.$('#errorClose'); },
-    get settingsModal() { return Utils.$('#settingsModal'); },
-    get closeSettingsBtn() { return Utils.$('#closeSettingsBtn'); },
-    get apiUrlInput() { return Utils.$('#apiUrlInput'); },
-    get numSourcesInput() { return Utils.$('#numSourcesInput'); },
-    get cancelSettingsBtn() { return Utils.$('#cancelSettingsBtn'); },
-    get saveSettingsBtn() { return Utils.$('#saveSettingsBtn'); },
     get confirmModal() { return Utils.$('#confirmModal'); },
     get confirmMessage() { return Utils.$('#confirmMessage'); },
     get confirmCancelBtn() { return Utils.$('#confirmCancelBtn'); },
@@ -79,38 +76,37 @@ const Elements = {
  * Called when DOM is ready
  */
 function initializeApp() {
-    console.log('🏋️ Kanya Raasi - Initializing...');
-
-    // Load saved theme
     initializeTheme();
-
-    // Load saved messages
-    loadMessages();
-
-    // Set up event listeners
+    initializeSession();
     setupEventListeners();
-
-    // Start health check
     API.startHealthCheck(updateHealthStatus);
-
-    // Set up cross-tab sync
     Storage.setupStorageSync(handleCrossTabMessageUpdate, handleCrossTabThemeUpdate);
-
-    // Update last active
     Storage.updateLastActive();
-
-    // Focus input
     Elements.messageInput.focus();
-
-    // Hide loading overlay with fade animation
     setTimeout(() => {
         Elements.loadingOverlay.classList.add('fade-out');
-        setTimeout(() => {
-            Elements.loadingOverlay.classList.add('hidden');
-        }, 350);
+        setTimeout(() => Elements.loadingOverlay.classList.add('hidden'), 350);
     }, 500);
+}
 
-    console.log('✅ Kanya Raasi - Ready!');
+/**
+ * Initialize or restore the active session
+ */
+function initializeSession() {
+    let sessionId = Storage.getActiveSessionId();
+    const sessions = Storage.getSessions();
+
+    // If no sessions exist or saved session is gone, create a fresh one
+    if (!sessionId || !sessions[sessionId]) {
+        const session = Storage.createSession('New chat');
+        sessionId = session.id;
+    }
+
+    AppState.currentSessionId = sessionId;
+    Storage.setActiveSessionId(sessionId);
+
+    renderSidebar();
+    loadMessages();
 }
 
 /**
@@ -149,7 +145,8 @@ function setupEventListeners() {
     Elements.themeToggle.addEventListener('click', handleThemeToggle);
 
     // ─── New Chat ───
-    Elements.newChatBtn.addEventListener('click', handleNewChat);
+    Elements.sidebarNewChatBtn.addEventListener('click', handleNewChat);
+    Elements.sidebarToggle.addEventListener('click', toggleSidebar);
 
     // ─── Dropdown Menu ───
     Elements.moreBtn.addEventListener('click', toggleDropdown);
@@ -158,16 +155,9 @@ function setupEventListeners() {
     // ─── Dropdown Actions ───
     Elements.exportChatBtn.addEventListener('click', handleExportChat);
     Elements.clearHistoryBtn.addEventListener('click', handleClearHistory);
-    Elements.settingsBtn.addEventListener('click', openSettingsModal);
 
     // ─── Error Banner ───
     Elements.errorClose.addEventListener('click', hideError);
-
-    // ─── Settings Modal ───
-    Elements.closeSettingsBtn.addEventListener('click', closeSettingsModal);
-    Elements.cancelSettingsBtn.addEventListener('click', closeSettingsModal);
-    Elements.saveSettingsBtn.addEventListener('click', saveSettings);
-    Elements.settingsModal.addEventListener('click', handleModalBackdropClick);
 
     // ─── Confirm Modal ───
     Elements.confirmModal.addEventListener('click', handleModalBackdropClick);
@@ -208,7 +198,7 @@ async function handleFormSubmit(event) {
 }
 
 /**
- * Send a message and get AI response
+ * Send a message and get AI response with streaming
  * @param {string} message 
  */
 async function sendMessage(message) {
@@ -221,6 +211,19 @@ async function sendMessage(message) {
     Elements.messageInput.value = '';
     updateCharCounter();
     updateSendButton();
+
+    // ── Snapshot session context BEFORE any async work ──
+    const sessionId = AppState.currentSessionId;
+
+    // Build conversation history BEFORE adding the new user message
+    // (backend appends the query itself, so including it here would duplicate it)
+    const conversationHistory = AppState.messages
+        .filter(msg => !msg.isStreaming && !msg.isError)
+        .slice(-30)
+        .map(msg => ({
+            role: msg.role,
+            content: msg.content
+        }));
 
     // Add user message
     const userMessage = {
@@ -238,53 +241,155 @@ async function sendMessage(message) {
     setLoading(true);
     showTypingIndicator();
 
+    const aiMessageId = Utils.generateId('msg');
+    const aiMessage = {
+        id: aiMessageId,
+        role: 'ai',
+        content: '',
+        sources: [],
+        timestamp: Date.now(),
+        isStreaming: true
+    };
+
+    let bubbleRendered = false;
+    let fullContent = '';
+
+    // Helper: check if user is still viewing the session that started this request
+    const isStillActiveSession = () => AppState.currentSessionId === sessionId;
+
     try {
-        // Make API request
         AppState.currentRequestId = Utils.generateId('req');
-        const response = await API.askQuestion(message);
 
-        // Add AI response
-        const aiMessage = {
-            id: Utils.generateId('msg'),
-            role: 'ai',
-            content: response.answer,
-            sources: response.sources,
-            timestamp: Date.now()
-        };
+        const response = await API.askQuestion(
+            message,
+            null,
+            conversationHistory,
+            (content, replaceMode) => {
+                fullContent = replaceMode ? content : (fullContent + content);
 
-        addMessageToState(aiMessage);
-        hideTypingIndicator();
-        renderMessage(aiMessage);
-        scrollToBottom();
+                if (!fullContent.trim()) return;
+
+                // First chunk: render the bubble (only if still viewing this session)
+                if (!bubbleRendered) {
+                    hideTypingIndicator();
+                    if (isStillActiveSession()) {
+                        AppState.messages.push(aiMessage);
+                        renderMessage(aiMessage);
+                    }
+                    // Always save to storage under the correct session
+                    Storage.addMessage(sessionId, aiMessage);
+                    bubbleRendered = true;
+                }
+
+                // Update bubble content in real-time (DOM element may not exist if user switched)
+                const messageElement = document.querySelector(`[data-message-id="${aiMessageId}"]`);
+                if (messageElement) {
+                    const contentElement = messageElement.querySelector('.message-content');
+                    if (contentElement) {
+                        contentElement.innerHTML = Utils.parseMarkdown(fullContent);
+                        if (AppState.isScrolledToBottom) {
+                            scrollToBottom();
+                        }
+                    }
+                }
+            }
+        );
+
+        // If no chunks arrived at all, render now
+        if (!bubbleRendered) {
+            hideTypingIndicator();
+            aiMessage.content = response.answer;
+            if (isStillActiveSession()) {
+                AppState.messages.push(aiMessage);
+                renderMessage(aiMessage);
+            }
+            Storage.addMessage(sessionId, aiMessage);
+            bubbleRendered = true;
+        }
+
+        // Finalise message state
+        aiMessage.content = response.answer;
+        aiMessage.sources = response.sources;
+        aiMessage.isStreaming = false;
+
+        // Update in-memory state only if still viewing this session
+        if (isStillActiveSession()) {
+            const messageIndex = AppState.messages.findIndex(m => m.id === aiMessageId);
+            if (messageIndex !== -1) {
+                AppState.messages[messageIndex] = aiMessage;
+            }
+        }
+        // Always persist to correct session in storage
+        Storage.updateMessage(sessionId, aiMessageId, aiMessage);
+
+        // Update final content + attach sources in-place (DOM may not exist)
+        const messageElement = document.querySelector(`[data-message-id="${aiMessageId}"]`);
+        if (messageElement) {
+            const contentElement = messageElement.querySelector('.message-content');
+            if (contentElement) {
+                contentElement.innerHTML = Utils.parseMarkdown(response.answer);
+            }
+            if (response.sources && response.sources.length > 0) {
+                const existingSources = messageElement.querySelector('.sources');
+                if (!existingSources) {
+                    try {
+                        const sourcesElement = renderSources(response.sources);
+                        const bubble = messageElement.querySelector('.message');
+                        if (bubble) bubble.appendChild(sourcesElement);
+                    } catch (e) {
+                        console.error('Error adding sources:', e);
+                    }
+                }
+            }
+        }
+        if (isStillActiveSession()) {
+            scrollToBottom();
+        }
         hideError();
 
     } catch (error) {
         console.error('Failed to get response:', error);
+
         hideTypingIndicator();
+        // Remove the streaming message bubble if it was already rendered
+        const messageElement = document.querySelector(`[data-message-id="${aiMessageId}"]`);
+        if (messageElement) {
+            messageElement.remove();
+        }
+        
+        // Remove from state
+        if (isStillActiveSession()) {
+            AppState.messages = AppState.messages.filter(m => m.id !== aiMessageId);
+        }
+        Storage.deleteMessage(sessionId, aiMessageId);
 
-        // Show error message
-        const errorMessage = error instanceof API.APIError
-            ? error.getUserMessage()
-            : 'An unexpected error occurred. Please try again.';
+        // Show error only if still on the same session
+        if (isStillActiveSession()) {
+            const errorMessage = error instanceof API.APIError
+                ? error.getUserMessage()
+                : 'An unexpected error occurred. Please try again.';
 
-        showError(errorMessage);
+            showError(errorMessage);
 
-        // Add error message to chat
-        const errorBubble = {
-            id: Utils.generateId('msg'),
-            role: 'ai',
-            content: `⚠️ **Error:** ${errorMessage}\n\nPlease try again or check your connection.`,
-            isError: true,
-            timestamp: Date.now()
-        };
+            const errorBubble = {
+                id: Utils.generateId('msg'),
+                role: 'ai',
+                content: `⚠️ **Error:** ${errorMessage}\n\nPlease try again or check your connection.`,
+                isError: true,
+                timestamp: Date.now()
+            };
 
-        renderMessage(errorBubble);
-        scrollToBottom();
+            addMessageToState(errorBubble);
+            renderMessage(errorBubble);
+            scrollToBottom();
+        }
 
     } finally {
         setLoading(false);
         AppState.currentRequestId = null;
-        Elements.messageInput.focus();
+        if (isStillActiveSession()) {
+            Elements.messageInput.focus();
+        }
     }
 }
 
@@ -294,27 +399,132 @@ async function sendMessage(message) {
  */
 function addMessageToState(message) {
     AppState.messages.push(message);
-    Storage.addMessage(message);
+    Storage.addMessage(AppState.currentSessionId, message);
+
+    // Auto-title the session from the first user message
+    const sessions = Storage.getSessions();
+    const session = sessions[AppState.currentSessionId];
+    if (session && session.title === 'New chat' && message.role === 'user') {
+        const title = message.content.slice(0, 40) + (message.content.length > 40 ? '…' : '');
+        Storage.updateSessionTitle(AppState.currentSessionId, title);
+        renderSidebar();
+    }
 }
 
 /**
  * Load messages from storage
  */
 function loadMessages() {
-    AppState.messages = Storage.getMessages();
+    Utils.clearChildren(Elements.messagesContainer);
+    AppState.messages = Storage.getMessages(AppState.currentSessionId);
 
     if (AppState.messages.length > 0) {
-        // Hide welcome screen
-        if (Elements.welcomeScreen) {
-            Elements.welcomeScreen.classList.add('hidden');
-        }
-
-        // Render all messages
+        if (Elements.welcomeScreen) Elements.welcomeScreen.classList.add('hidden');
         AppState.messages.forEach(renderMessage);
-
-        // Scroll to bottom after rendering
         setTimeout(scrollToBottom, 100);
+    } else {
+        // Show welcome screen for empty sessions
+        const existing = Utils.$('#welcomeScreen');
+        if (!existing) {
+            const ws = createWelcomeScreen();
+            Elements.messagesContainer.appendChild(ws);
+        } else {
+            existing.classList.remove('hidden');
+        }
     }
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// SIDEBAR
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * Render the sidebar session list
+ */
+function renderSidebar() {
+    const list = Elements.sidebarList;
+    if (!list) return;
+    Utils.clearChildren(list);
+
+    const sessions = Storage.getSessionList();
+    if (sessions.length === 0) {
+        const empty = Utils.createElement('div', { class: 'sidebar-empty' }, ['No chats yet']);
+        list.appendChild(empty);
+        return;
+    }
+
+    sessions.forEach(session => {
+        const isActive = session.id === AppState.currentSessionId;
+        const item = Utils.createElement('div', {
+            class: `sidebar-item${isActive ? ' active' : ''}`,
+            dataset: { sessionId: session.id }
+        });
+
+        const icon = Utils.createElement('span', { class: 'sidebar-item-icon' }, ['💬']);
+        const text = Utils.createElement('span', { class: 'sidebar-item-text' }, [session.title]);
+        const del = Utils.createElement('button', {
+            class: 'sidebar-item-delete',
+            title: 'Delete chat'
+        }, ['×']);
+
+        del.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleDeleteSession(session.id);
+        });
+
+        item.appendChild(icon);
+        item.appendChild(text);
+        item.appendChild(del);
+
+        item.addEventListener('click', () => switchSession(session.id));
+        list.appendChild(item);
+    });
+}
+
+/**
+ * Switch to a different session
+ * @param {string} sessionId
+ */
+function switchSession(sessionId) {
+    if (sessionId === AppState.currentSessionId) return;
+    AppState.currentSessionId = sessionId;
+    Storage.setActiveSessionId(sessionId);
+    loadMessages();
+    renderSidebar();
+    hideError();
+    Elements.messageInput.focus();
+}
+
+/**
+ * Delete a session from the sidebar
+ * @param {string} sessionId
+ */
+function handleDeleteSession(sessionId) {
+    Storage.deleteSession(sessionId);
+
+    if (sessionId === AppState.currentSessionId) {
+        const remaining = Storage.getSessionList();
+        if (remaining.length > 0) {
+            AppState.currentSessionId = remaining[0].id;
+            Storage.setActiveSessionId(remaining[0].id);
+        } else {
+            const fresh = Storage.createSession('New chat');
+            AppState.currentSessionId = fresh.id;
+        }
+        loadMessages();
+    }
+    renderSidebar();
+}
+
+/**
+ * Toggle sidebar collapsed state
+ */
+function toggleSidebar() {
+    const sidebar = Elements.sidebar;
+    const toggle = Elements.sidebarToggle;
+    sidebar.classList.toggle('collapsed');
+    toggle.classList.toggle('collapsed');
 }
 
 
@@ -329,7 +539,7 @@ function loadMessages() {
 function renderMessage(message) {
     const wrapper = Utils.createElement('div', {
         class: `message-wrapper ${message.role}`,
-        dataset: { id: message.id }
+        dataset: { messageId: message.id }
     });
 
     // Message bubble
@@ -369,10 +579,20 @@ function renderMessage(message) {
     wrapper.appendChild(meta);
 
     // Insert before typing indicator if present, otherwise append
-    const typingIndicator = Utils.$('.typing-indicator', Elements.messagesContainer);
-    if (typingIndicator) {
-        Elements.messagesContainer.insertBefore(wrapper, typingIndicator);
-    } else {
+    const typingIndicator = Utils.$('#typingIndicator');
+    try {
+        if (typingIndicator && typingIndicator.parentNode === Elements.messagesContainer) {
+            Elements.messagesContainer.insertBefore(wrapper, typingIndicator);
+        } else if (typingIndicator && typingIndicator.parentNode) {
+            // Typing indicator exists but is not a direct child, find its parent
+            typingIndicator.parentNode.insertBefore(wrapper, typingIndicator);
+        } else {
+            // Typing indicator doesn't exist or has no parent, just append
+            Elements.messagesContainer.appendChild(wrapper);
+        }
+    } catch (e) {
+        console.error('Error inserting message:', e);
+        // Fallback to append if insertBefore fails
         Elements.messagesContainer.appendChild(wrapper);
     }
 }
@@ -398,7 +618,18 @@ function renderSources(sources) {
     const list = Utils.createElement('ul', { class: 'sources-list' });
 
     sources.forEach(source => {
-        const item = Utils.createElement('li', { class: 'source-item' }, [source]);
+        let child;
+        if (source.startsWith('http')) {
+            child = Utils.createElement('a', {
+                href: source,
+                target: '_blank',
+                rel: 'noopener noreferrer',
+                class: 'source-link'
+            }, [source.replace(/^https?:\/\//, '').split('/')[0]]);
+        } else {
+            child = document.createTextNode(source.replace(/\.(pdf|txt|md)$/i, '').replace(/[-_]/g, ' '));
+        }
+        const item = Utils.createElement('li', { class: 'source-item' }, [child]);
         list.appendChild(item);
     });
 
@@ -608,51 +839,6 @@ function hideError() {
 // ════════════════════════════════════════════════════════════════
 
 /**
- * Open settings modal
- */
-function openSettingsModal() {
-    closeDropdown();
-
-    // Populate with current settings
-    const settings = Storage.getSettings();
-    Elements.apiUrlInput.value = settings.apiUrl;
-    Elements.numSourcesInput.value = settings.numSources;
-
-    Elements.settingsModal.classList.remove('hidden');
-}
-
-/**
- * Close settings modal
- */
-function closeSettingsModal() {
-    Elements.settingsModal.classList.add('hidden');
-}
-
-/**
- * Save settings from modal
- */
-function saveSettings() {
-    const apiUrl = Elements.apiUrlInput.value.trim();
-    const numSources = parseInt(Elements.numSourcesInput.value, 10);
-
-    // Validate API URL
-    if (apiUrl && !Utils.isValidURL(apiUrl)) {
-        alert('Please enter a valid URL');
-        return;
-    }
-
-    Storage.saveSettings({
-        apiUrl: apiUrl || Storage.DEFAULT_SETTINGS.apiUrl,
-        numSources: isNaN(numSources) ? 5 : Math.min(10, Math.max(1, numSources))
-    });
-
-    closeSettingsModal();
-
-    // Refresh health check with new URL
-    API.performHealthCheck();
-}
-
-/**
  * Show confirmation modal
  * @param {string} message 
  * @param {Function} onConfirm 
@@ -734,24 +920,17 @@ function handleThemeToggle() {
  * Handle new chat button
  */
 function handleNewChat() {
-    showConfirmModal(
-        'Start a new chat? Current conversation will be saved.',
-        () => {
-            // Keep messages in storage but clear from view
-            Utils.clearChildren(Elements.messagesContainer);
+    // Create a fresh session immediately — no confirmation needed
+    const session = Storage.createSession('New chat');
+    AppState.currentSessionId = session.id;
+    AppState.messages = [];
 
-            // Show welcome screen
-            const welcomeScreen = createWelcomeScreen();
-            Elements.messagesContainer.appendChild(welcomeScreen);
+    Utils.clearChildren(Elements.messagesContainer);
+    Elements.messagesContainer.appendChild(createWelcomeScreen());
 
-            // Clear in-memory messages (keep in storage as history)
-            AppState.messages = [];
-            Storage.clearMessages();
-
-            hideError();
-            Elements.messageInput.focus();
-        }
-    );
+    renderSidebar();
+    hideError();
+    Elements.messageInput.focus();
 }
 
 /**
@@ -818,10 +997,11 @@ function handleExportChat() {
         return;
     }
 
+    const sessions = Storage.getSessions();
+    const title = sessions[AppState.currentSessionId]?.title || 'chat';
     const textContent = Utils.formatMessagesAsText(AppState.messages);
-    const filename = `kanya-raasi-chat-${new Date().toISOString().slice(0, 10)}.txt`;
-
-    Utils.downloadFile(textContent, filename, 'text/plain');
+    const slug = title.slice(0, 30).replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    Utils.downloadFile(textContent, `kanya-raasi-${slug}-${new Date().toISOString().slice(0, 10)}.txt`, 'text/plain');
 }
 
 /**
@@ -831,16 +1011,20 @@ function handleClearHistory() {
     closeDropdown();
 
     showConfirmModal(
-        'Clear all chat history? This cannot be undone.',
+        'Delete all chats? This cannot be undone.',
         () => {
-            Utils.clearChildren(Elements.messagesContainer);
+            // Delete every session
+            Storage.getSessionList().forEach(s => Storage.deleteSession(s.id));
+
+            // Start fresh
+            const session = Storage.createSession('New chat');
+            AppState.currentSessionId = session.id;
             AppState.messages = [];
-            Storage.clearMessages();
 
-            // Show welcome screen
-            const welcomeScreen = createWelcomeScreen();
-            Elements.messagesContainer.appendChild(welcomeScreen);
+            Utils.clearChildren(Elements.messagesContainer);
+            Elements.messagesContainer.appendChild(createWelcomeScreen());
 
+            renderSidebar();
             hideError();
         }
     );
@@ -912,7 +1096,6 @@ function handleCrossTabThemeUpdate(newTheme) {
 function handleGlobalKeydown(event) {
     // Escape to close modals
     if (event.key === 'Escape') {
-        closeSettingsModal();
         Utils.$('#confirmModal')?.classList.add('hidden');
         closeDropdown();
     }

@@ -30,7 +30,24 @@
         Uses CSS Grid for responsive layout
     -->
     <div id="app" class="app-container">
-        
+
+        <!-- SIDEBAR: Chat History -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <span class="sidebar-title">Chats</span>
+                <button class="btn btn-primary sidebar-new-btn" id="sidebarNewChatBtn">+ New</button>
+            </div>
+            <div class="sidebar-list" id="sidebarList">
+                <!-- Chat sessions rendered here by JS -->
+            </div>
+        </aside>
+
+        <!-- SIDEBAR TOGGLE (mobile + collapsed) -->
+        <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle chat history">&#9776;</button>
+
+        <!-- MAIN WRAPPER -->
+        <div class="main-wrapper" id="mainWrapper">
+
         <!-- 
             HEADER SECTION
             Contains: Logo, Title, Theme Toggle, Action Buttons
@@ -66,15 +83,6 @@
                     <span class="icon-moon">🌙</span>
                 </button>
                 
-                <!-- New Chat Button -->
-                <button 
-                    class="btn btn-secondary" 
-                    id="newChatBtn"
-                    title="Start a new conversation"
-                >
-                    <span>+ New Chat</span>
-                </button>
-                
                 <!-- More Options Dropdown -->
                 <div class="dropdown" id="moreDropdown">
                     <button class="btn btn-icon" id="moreBtn" aria-label="More options">
@@ -86,10 +94,6 @@
                         </button>
                         <button class="dropdown-item" id="clearHistoryBtn">
                             🗑️ Clear History
-                        </button>
-                        <hr class="dropdown-divider">
-                        <button class="dropdown-item" id="settingsBtn">
-                            ⚙️ Settings
                         </button>
                     </div>
                 </div>
@@ -211,49 +215,8 @@
                 AI can make mistakes. Always consult healthcare professionals for medical advice.
             </p>
         </footer>
-    </div>
-
-    <!-- 
-        SETTINGS MODAL
-        Configurable options like API URL, theme, etc.
-    -->
-    <div class="modal-overlay hidden" id="settingsModal">
-        <div class="modal" role="dialog" aria-labelledby="settingsTitle">
-            <div class="modal-header">
-                <h2 id="settingsTitle">⚙️ Settings</h2>
-                <button class="modal-close" id="closeSettingsBtn" aria-label="Close settings">×</button>
-            </div>
-            <div class="modal-body">
-                <div class="setting-group">
-                    <label for="apiUrlInput">API URL</label>
-                    <input 
-                        type="url" 
-                        id="apiUrlInput" 
-                        class="setting-input"
-                        placeholder="http://localhost:8000"
-                    >
-                    <small class="setting-help">The URL where your FastAPI backend is running</small>
-                </div>
-                
-                <div class="setting-group">
-                    <label for="numSourcesInput">Number of Sources (k)</label>
-                    <input 
-                        type="number" 
-                        id="numSourcesInput" 
-                        class="setting-input"
-                        min="1"
-                        max="10"
-                        value="5"
-                    >
-                    <small class="setting-help">How many relevant documents to retrieve (1-10)</small>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" id="cancelSettingsBtn">Cancel</button>
-                <button class="btn btn-primary" id="saveSettingsBtn">Save Settings</button>
-            </div>
-        </div>
-    </div>
+        </div><!-- /.main-wrapper -->
+    </div><!-- /.app-container -->
 
     <!-- 
         CONFIRMATION MODAL
@@ -286,9 +249,10 @@
     </div>
 
     <!-- JavaScript Modules - Loaded in order of dependencies -->
-    <script src="js/utils.js"></script>      <!-- Utility functions first -->
-    <script src="js/storage.js"></script>    <!-- Storage depends on utils -->
-    <script src="js/api.js"></script>        <!-- API depends on utils -->
-    <script src="js/app.js"></script>        <!-- Main app depends on all above -->
+    <script src="config.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/storage.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/app.js"></script>
 </body>
 </html>

@@ -29,7 +29,13 @@
 
 const API_CONFIG = {
     get baseUrl() {
-        return Storage.getSetting('apiUrl') || 'http://localhost:8000';
+        // 1. config.js override — set BACKEND_URL when frontend and backend are on different hosts
+        // 2. Same origin — works when served together (Render / local backend)
+        // 3. Localhost fallback for plain file:// dev
+        const configured = (typeof APP_CONFIG !== 'undefined') && APP_CONFIG.BACKEND_URL;
+        if (configured) return APP_CONFIG.BACKEND_URL.replace(/\/$/, '');
+        if (window.location.protocol !== 'file:') return window.location.origin;
+        return 'http://localhost:8000';
     },
     timeout: 60000,          // 30 seconds - AI responses can take time
     retryAttempts: 2,        // Number of retry attempts for failed requests
@@ -230,37 +236,121 @@ async function checkHealth() {
 }
 
 /**
- * Ask a question and get AI-generated answer
+ * Ask a question and get AI-generated answer with streaming support
  * 
  * @param {string} query - User's question
  * @param {number} k - Number of documents to retrieve (default: 5)
+ * @param {Array} conversationHistory - Previous conversation context
+ * @param {Function} onChunk - Callback for streaming chunks
  * @returns {Promise<{question: string, answer: string, sources: string[]}>}
  */
-async function askQuestion(query, k = null) {
+async function askQuestion(query, k = null, conversationHistory = [], onChunk = null) {
     // Validate input
     const validation = Utils.validateMessage(query);
     if (!validation.valid) {
         throw new APIError(validation.error, 400, { type: 'validation' });
     }
 
-    // Use settings if k not provided
+    // Use default k if not provided
     if (k === null) {
-        k = Storage.getSetting('numSources') || 5;
+        k = 5;
     }
 
-    const response = await request('/ask', {
-        method: 'POST',
-        body: JSON.stringify({
-            query: query.trim(),
-            k: k
-        })
-    });
+    const url = `${API_CONFIG.baseUrl}/ask`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.timeout);
+    
+    activeRequests.set('ask-question', controller);
 
-    return {
-        question: response.question,
-        answer: response.answer,
-        sources: response.sources || []
-    };
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'text/plain'
+            },
+            body: JSON.stringify({
+                query: query.trim(),
+                k: k,
+                conversation_history: conversationHistory
+            }),
+            signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+        activeRequests.delete('ask-question');
+
+        if (!response.ok) {
+            const errorData = await parseErrorResponse(response);
+            throw new APIError(
+                errorData.message || `HTTP ${response.status}`,
+                response.status,
+                errorData
+            );
+        }
+
+        // Handle streaming response
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullAnswer = '';
+        const FOOTER_MARKER = '\n\n---\nSources:';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            fullAnswer += chunk;
+
+            // Show only the answer portion (before the sources footer) while streaming
+            if (onChunk) {
+                const footerIndex = fullAnswer.indexOf(FOOTER_MARKER);
+                const visibleContent = footerIndex !== -1
+                    ? fullAnswer.slice(0, footerIndex)
+                    : fullAnswer;
+                onChunk(visibleContent, true); // true = replace mode
+            }
+        }
+
+        // Parse sources from the footer
+        const footerIndex = fullAnswer.indexOf(FOOTER_MARKER);
+        const answerPart = footerIndex !== -1 ? fullAnswer.slice(0, footerIndex).trim() : fullAnswer.trim();
+        const footerPart = footerIndex !== -1 ? fullAnswer.slice(footerIndex) : '';
+
+        const sourcesMatch = footerPart.match(/Sources: ([^\n]+)/);
+        const sources = sourcesMatch
+            ? sourcesMatch[1].split(',').map(s => s.trim()).filter(Boolean)
+            : [];
+
+        if (!answerPart) {
+            throw new APIError('The AI returned an empty response. Please try again.', 500, { type: 'empty_response' });
+        }
+
+        return {
+            question: query,
+            answer: answerPart,
+            sources: sources,
+            fullAnswer: fullAnswer
+        };
+
+    } catch (error) {
+        clearTimeout(timeoutId);
+        activeRequests.delete('ask-question');
+
+        if (error.name === 'AbortError') {
+            throw new APIError('Request timed out. Please try again.', 408, { type: 'timeout' });
+        }
+
+        if (error instanceof APIError) {
+            throw error;
+        }
+
+        throw new APIError(
+            'Unable to connect to server. Please check your connection.',
+            0,
+            { type: 'network', originalError: error }
+        );
+    }
 }
 
 /**
