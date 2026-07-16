@@ -7,7 +7,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_openai import OpenAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from datasets import load_dataset
 from langchain_core.documents import Document
 from dotenv import load_dotenv
@@ -31,14 +31,14 @@ _openrouter_client = None
 
 
 def get_embeddings():
-    """Return a cached OpenAI-compatible embeddings client (singleton, no local model)."""
+    """Return a cached HuggingFace embeddings client (singleton, local model)."""
     global _embeddings_model
     if _embeddings_model is None:
-        logger.info("Initialising embeddings via OpenRouter...")
-        _embeddings_model = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            openai_api_key=os.getenv("OPENROUTER_API_KEY"),
-            openai_api_base="https://openrouter.ai/api/v1",
+        logger.info("Initialising embeddings via HuggingFace (all-mpnet-base-v2)...")
+        _embeddings_model = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-mpnet-base-v2",
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True}
         )
         logger.info("Embeddings client ready.")
     return _embeddings_model
@@ -47,7 +47,7 @@ def get_embeddings():
 def get_vectorstore():
     """Return a cached ChromaDB vector store (singleton)."""
     global _vectorstore
-    persist_directory = os.path.join(os.getcwd(), "chroma_db")
+    persist_directory = os.getenv("CHROMA_PERSIST_DIR", os.path.join(os.getcwd(), "chroma_db"))
     if _vectorstore is None and os.path.exists(persist_directory):
         logger.info("Loading vector store (first call)...")
         _vectorstore = Chroma(
@@ -182,7 +182,11 @@ def store_in_chroma(chunks, reset=True):
         chunks: Document chunks to store
         reset: If True, deletes existing database before storing (prevents duplicates)
     """
-    persist_directory = os.path.join(os.getcwd(), "chroma_db")
+    # Use configurable persist directory, default to /tmp for production (writable on Render.com)
+    persist_directory = os.getenv("CHROMA_PERSIST_DIR", os.path.join(os.getcwd(), "chroma_db"))
+    
+    # Ensure directory exists and is writable
+    os.makedirs(persist_directory, exist_ok=True)
     
     if reset and os.path.exists(persist_directory):
         logger.info(f"Clearing existing database at: {persist_directory}")
