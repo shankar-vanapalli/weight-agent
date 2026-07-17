@@ -38,6 +38,12 @@ USER appuser
 
 ENV PYTHONUNBUFFERED=1
 ENV ENV=production
+# Redirect all cache dirs to /tmp (writable by appuser on Render free tier)
+ENV HF_HOME=/tmp/hf_cache
+ENV HF_DATASETS_CACHE=/tmp/hf_cache/datasets
+ENV TRANSFORMERS_CACHE=/tmp/hf_cache/transformers
+ENV XDG_CACHE_HOME=/tmp/.cache
+ENV CHROMA_PERSIST_DIR=/tmp/chroma_db
 
 EXPOSE 8000
 
