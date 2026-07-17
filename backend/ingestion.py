@@ -3,6 +3,12 @@ import warnings
 import sys
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# Ensure HuggingFace caches write to /tmp on Render (where /home/appuser is read-only)
+if not os.access(os.path.expanduser("~"), os.W_OK):
+    os.environ.setdefault("HF_HOME", "/tmp/hf_cache")
+    os.environ.setdefault("HF_DATASETS_CACHE", "/tmp/hf_cache/datasets")
+    os.environ.setdefault("TRANSFORMERS_CACHE", "/tmp/hf_cache/transformers")
+    os.environ.setdefault("XDG_CACHE_HOME", "/tmp/.cache")
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter

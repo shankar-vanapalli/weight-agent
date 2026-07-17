@@ -8,6 +8,8 @@ services:
     envVars:
       - key: OPENROUTER_API_KEY
         sync: false          # Render will prompt you to enter this manually (never in repo)
+      - key: HF_TOKEN
+        sync: false          # Free HuggingFace token for embeddings
       - key: ENV
         value: production
       - key: WORKERS
@@ -19,6 +21,12 @@ services:
       - key: ENABLE_WEB_SEARCH
         value: "true"
       - key: LLM_MODEL
-        value: google/gemini-2.5-flash
+        value: openai/gpt-oss-20b:free
+      - key: CHROMA_PERSIST_DIR
+        value: /tmp/chroma_db
+      - key: HF_HOME
+        value: /tmp/hf_cache
+      - key: HF_DATASETS_CACHE
+        value: /tmp/hf_cache/datasets
       - key: ALLOWED_ORIGINS
         value: "*"           # Same-origin — frontend served from same server, CORS not needed
