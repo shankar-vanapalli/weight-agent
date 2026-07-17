@@ -7,7 +7,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from datasets import load_dataset
 from langchain_core.documents import Document
 from dotenv import load_dotenv
@@ -31,14 +31,13 @@ _openrouter_client = None
 
 
 def get_embeddings():
-    """Return a cached HuggingFace embeddings client (singleton, local model)."""
+    """Return a cached HuggingFace Inference API embeddings client (singleton, free tier)."""
     global _embeddings_model
     if _embeddings_model is None:
-        logger.info("Initialising embeddings via HuggingFace (all-mpnet-base-v2)...")
-        _embeddings_model = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-mpnet-base-v2",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
+        logger.info("Initialising embeddings via HuggingFace Inference API...")
+        _embeddings_model = HuggingFaceInferenceAPIEmbeddings(
+            api_key=os.getenv("HF_TOKEN"),
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
         logger.info("Embeddings client ready.")
     return _embeddings_model
