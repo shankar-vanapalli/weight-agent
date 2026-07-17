@@ -14,7 +14,6 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
-from datasets import load_dataset
 from langchain_core.documents import Document
 from dotenv import load_dotenv
 from duckduckgo_search import DDGS
@@ -79,20 +78,14 @@ def reset_vectorstore_cache():
     global _vectorstore
     _vectorstore = None
 
-def main(include_huggingface=True):
-    """Run the full ingestion pipeline."""
+def main():
+    """Run the full ingestion pipeline (PDFs only - no HuggingFace datasets to save memory)."""
     all_docs = []
     
-    # Load PDFs
+    # Load PDFs only
     pdf_docs = ingest_docs()
     if pdf_docs:
         all_docs.extend(pdf_docs)
-    
-    # Load HuggingFace datasets
-    if include_huggingface:
-        hf_docs = ingest_huggingface_datasets()
-        if hf_docs:
-            all_docs.extend(hf_docs)
     
     if all_docs:
         counts = {}
@@ -111,36 +104,11 @@ def main(include_huggingface=True):
         logger.warning("No documents to ingest!")
 
 
-def ingest_huggingface_datasets():
-    """Load diet/nutrition datasets from HuggingFace."""
-    
-    all_docs = []
-    
-    logger.info("Loading HuggingFace datasets...")
-    
-    # 1. Dietary Recommendation System (Limiting to 100 samples)
-    try:
-        logger.info("Loading: issai/LLM_for_Dietary_Recommendation_System")
-        dataset = load_dataset("issai/LLM_for_Dietary_Recommendation_System", split="train", streaming=True).take(100)
-        for row in dataset:
-            content = f"Condition: {row.get('health_conditions', 'N/A')} | Activity: {row.get('activity_level', 'N/A')} | Plan: {row.get('recommendation', row.get('diet_plan', 'N/A'))}"
-            doc = Document(page_content=content, metadata={"source": "HF: Dietary Recommendations"})
-            all_docs.append(doc)
-    except Exception as e:
-        logger.error(f"Error loading dietary dataset: {e}")
-    
-    # 2. Food nutritional values (Limiting to 200 samples)
-    try:
-        logger.info("Loading: HC-85/food-nutritional-values")
-        dataset = load_dataset("HC-85/food-nutritional-values", 'hidden_vector_states', split="train", streaming=True).take(200)
-        for row in dataset:
-            content = f"Food: {row.get('food', row.get('name', 'Unknown'))} (Cals: {row.get('calories', 'N/A')}, Protein: {row.get('protein', 'N/A')}g, Carbs: {row.get('carbohydrates', 'N/A')}g)"
-            doc = Document(page_content=content, metadata={"source": "HF: Nutritional Values"})
-            all_docs.append(doc)
-    except Exception as e:
-        logger.error(f"Error loading food dataset: {e}")
-    
-    return all_docs
+# HuggingFace datasets removed to reduce memory usage on Render free tier (512MB limit)
+# The app now relies on:
+# 1. PDF documents in /data folder (nutrition/health guides)
+# 2. Live web search for up-to-date information
+# 3. LLM's built-in knowledge
 
 
 def ingest_docs():
