@@ -1,30 +1,40 @@
 # Kanya Raasi - AI Health Coach
 
-A production-grade AI health coach that provides personalized weight loss, nutrition, and fitness advice using Retrieval-Augmented Generation (RAG) with live web search.
+An evidence-based, personalized AI health coach that provides weight loss, nutrition, and fitness advice using scientific web search and LLM knowledge.
 
 ## 🌟 Features
 
-- **Domain-Specific RAG**: Retrieves from PDFs, HuggingFace datasets, and live web search
-- **Expert System Prompt**: Tuned for weight loss coaching (ages 24-45, calorie/macro advice)
+### Personalization
+- **User Profiles**: Track weight, height, age, goals, and dietary restrictions
+- **Progress Tracking**: Weight history with BMI calculations and progress charts
+- **Personalized Advice**: Every response tailored to your profile data
+- **Session Persistence**: Your data is saved across sessions
+
+### Evidence-Based Coaching
+- **Scientific Sources**: Prioritizes .gov, .edu, and PubMed sources
+- **Citations**: Every answer includes source URLs
+- **Reasoning**: Explains the "why" behind recommendations
+- **Calculations**: Shows TDEE, calorie targets, BMI with your data
+
+### Technical Features
 - **Streaming Responses**: Real-time token streaming for instant feedback
-- **Conversation Memory**: Last 6 turns sent to the LLM for contextual follow-ups
-- **Application Metrics**: `/metrics` endpoint with p50/p95/p99 latency, request counts, error rates
-- **Deep Health Checks**: `/health` verifies vector store and LLM API key status
+- **Conversation Memory**: Last 30 turns for contextual follow-ups
+- **Application Metrics**: `/metrics` endpoint with latency, request counts, error rates
+- **Deep Health Checks**: `/health` verifies LLM API and database status
 - **Security Hardened**: Rate limiting, CORS lockdown, security headers, input validation
-- **Startup Warm-up**: Embeddings model and vector store cached at boot (no cold-start lag)
+- **100% Free**: No paid APIs required (uses free LLM models)
+- **Memory Efficient**: Runs on Render's 512MB free tier
 - **Dark/Light Theme**: Modern chat UI with export and history
 - **Responsive Design**: Desktop and mobile ready
 
 ## 🛠 Tech Stack
 
 ### Backend
-- **Python 3.8+**
+- **Python 3.11+**
 - **FastAPI**: Modern, fast web framework for building APIs
-- **LangChain**: Framework for building LLM applications
-- **ChromaDB**: Local vector database for embeddings
-- **HuggingFace Transformers**: Sentence embeddings (all-MiniLM-L6-v2)
-- **OpenRouter API**: Access to multiple LLM models (default: Google Gemini 2.0 Flash)
-- **DuckDuckGo Search**: Web search integration
+- **SQLite**: Lightweight database for user profiles and progress tracking
+- **OpenRouter API**: Access to free LLM models (default: openai/gpt-oss-20b:free)
+- **DuckDuckGo Search**: Scientific web search integration
 - **SlowAPI**: Rate limiting middleware
 
 ### Frontend
@@ -78,19 +88,9 @@ cp .env.example .env
 
 See [Configuration](#configuration) for all available options.
 
-### 4. Run Data Ingestion (First Time Only)
+### 4. Start the Application
 
-```bash
-python ingestion.py
-```
-
-This will:
-- Load PDF documents from the `data/` folder
-- Fetch datasets from HuggingFace
-- Generate embeddings using HuggingFace transformers
-- Store vectors in ChromaDB
-
-**Note**: This may take several minutes on first run as it downloads the embedding model.
+No data ingestion needed! The app uses web search and LLM knowledge directly.
 
 ## ⚙️ Configuration
 
@@ -106,7 +106,7 @@ OPENROUTER_API_KEY=your_openrouter_api_key_here
 
 ```bash
 # LLM Configuration
-LLM_MODEL=google/gemini-2.0-flash-001  # Model to use
+LLM_MODEL=openai/gpt-oss-20b:free  # Free model
 
 # Server Configuration
 HOST=0.0.0.0
@@ -118,11 +118,7 @@ ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 # Rate Limiting
 RATE_LIMIT_PER_MINUTE=30
 
-# Search Configuration
-DEFAULT_SEARCH_RESULTS=5
-MAX_SEARCH_RESULTS=10
-
-# Web Search
+# Web Search (scientific sources)
 ENABLE_WEB_SEARCH=true
 WEB_SEARCH_MAX_RESULTS=5
 ```
@@ -164,7 +160,7 @@ Ask a question and get AI-generated answer (streaming)
 ```json
 {
   "query": "What should I eat to lose weight?",
-  "k": 5,
+  "session_id": "uuid-here",
   "conversation_history": [
     {"role": "user", "content": "Previous question"},
     {"role": "ai", "content": "Previous answer"}
@@ -172,53 +168,57 @@ Ask a question and get AI-generated answer (streaming)
 }
 ```
 
-**Response:** Streaming text/plain with answer and sources
+**Response:** Streaming text/plain with personalized answer, reasoning, and scientific sources
 
-### POST `/search`
-Search for relevant documents without AI answer
+### POST `/profile`
+Create or update user profile
 
 **Request Body:**
 ```json
 {
-  "query": "protein requirements",
-  "k": 5
+  "session_id": "uuid-here",
+  "profile": {
+    "age": 30,
+    "gender": "female",
+    "height_cm": 165,
+    "current_weight_kg": 70,
+    "target_weight_kg": 60,
+    "dietary_restrictions": ["vegetarian"],
+    "activity_level": "moderate",
+    "goal_type": "weight_loss"
+  }
 }
 ```
 
-**Response:**
+### GET `/profile/{session_id}`
+Retrieve user profile
+
+### POST `/profile/{session_id}/weight`
+Log weight entry for progress tracking
+
+**Request Body:**
 ```json
 {
-  "query": "protein requirements",
-  "results": [
-    {
-      "content": "Document content...",
-      "source": "Source name",
-      "page": 1
-    }
-  ]
+  "weight_kg": 68.5
 }
 ```
 
+### GET `/profile/{session_id}/progress`
+Get progress data (weight history, BMI, progress percentage)
+
 ## 🔧 Development
-
-### Adding New PDF Documents
-
-Place PDF files in the `data/` directory and re-run ingestion:
-
-```bash
-cd backend
-python ingestion.py
-```
 
 ### Changing the LLM Model
 
 Edit the `.env` file:
 
 ```bash
-LLM_MODEL=anthropic/claude-3-haiku
+LLM_MODEL=google/gemma-2-9b-it:free
 ```
 
-Available models: [OpenRouter Models](https://openrouter.ai/models)
+Available free models: [OpenRouter Models](https://openrouter.ai/models?order=pricing-low-to-high&max_output_price=0)
+
+**Note:** Free models change frequently. The app has fallback logic to try multiple models.
 
 ### Adjusting Web Search Behavior
 
@@ -226,8 +226,17 @@ Available models: [OpenRouter Models](https://openrouter.ai/models)
 # Disable web search
 ENABLE_WEB_SEARCH=false
 
-# Increase web search results
+# Increase web search results (more scientific sources)
 WEB_SEARCH_MAX_RESULTS=10
+```
+
+### Database Management
+
+User profiles are stored in `profiles.db` (SQLite). To reset:
+
+```bash
+rm profiles.db
+# Database will be recreated on next startup
 ```
 
 ## 🐛 Troubleshooting
@@ -238,10 +247,11 @@ WEB_SEARCH_MAX_RESULTS=10
 - Check all dependencies are installed: `pip list`
 - Verify `.env` file exists and contains valid API key
 
-### Vector store not found
+### Free LLM model not working
 
-- Run ingestion: `python ingestion.py`
-- Check that `chroma_db/` directory exists in `backend/`
+- Check [OpenRouter](https://openrouter.ai/models?order=pricing-low-to-high&max_output_price=0) for currently available free models
+- Update `LLM_MODEL` in `.env` to a working free model
+- The app will automatically try fallback models
 
 ### CORS errors
 
@@ -255,9 +265,9 @@ WEB_SEARCH_MAX_RESULTS=10
 
 ### Slow responses
 
-- Reduce `k` (number of documents to retrieve)
 - Use a faster LLM model
 - Check internet connection for web search
+- Reduce `WEB_SEARCH_MAX_RESULTS` for faster searches
 
 ## 🔒 Security Considerations
 
@@ -293,9 +303,10 @@ Deep health check with dependency verification:
 ```json
 {
   "status": "healthy",
-  "version": "3.0.0",
+  "version": "4.0.0",
+  "mode": "no-RAG (web search + LLM knowledge)",
   "checks": {
-    "vectorstore": "ok",
+    "database": "ok",
     "llm_api_key": "configured"
   },
   "uptime_seconds": 3600.5
@@ -314,16 +325,29 @@ Every request is logged with a unique request ID for tracing:
 - **active_streams** — concurrent streaming connections
 - **tokens_generated** — LLM usage tracking for cost control
 
-## �� Architecture
+## 🏗 Architecture
 
 ```
-User Query → Frontend → API → Vector Store Search
+User Query → Frontend → API
                     ↓
-              Web Search (if needed)
+              Load User Profile (SQLite)
                     ↓
-              Context Building (system prompt + conversation history)
+              Scientific Web Search (.gov, .edu, PubMed)
                     ↓
-              LLM (OpenRouter) → Streaming Response
+              Context Building (profile + sources + conversation history)
                     ↓
-              Frontend Display (real-time token rendering)
+              LLM (Free OpenRouter model) → Streaming Response
+                    ↓
+              Frontend Display (real-time token rendering + citations)
 ```
+
+## 🎯 What Makes This Different?
+
+Unlike generic health chatbots:
+
+1. **Personalization**: Remembers your weight, goals, restrictions across sessions
+2. **Evidence-Based**: Prioritizes scientific sources (.gov, .edu, PubMed)
+3. **Transparency**: Shows calculations (TDEE, BMI) and cites sources
+4. **Progress Tracking**: Weight history with visual charts
+5. **100% Free**: No paid APIs, runs on free tier infrastructure
+6. **Memory Efficient**: Optimized for 512MB RAM (no heavy ML models)
