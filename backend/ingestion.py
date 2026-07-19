@@ -13,7 +13,7 @@ if not os.access(os.path.expanduser("~"), os.W_OK):
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 from dotenv import load_dotenv
 from duckduckgo_search import DDGS
@@ -36,13 +36,14 @@ _openrouter_client = None
 
 
 def get_embeddings():
-    """Return a cached HuggingFace Inference API embeddings client (singleton, free tier)."""
+    """Return a cached OpenAI embeddings client via OpenRouter (uses same API key as LLM)."""
     global _embeddings_model
     if _embeddings_model is None:
-        logger.info("Initialising embeddings via HuggingFace Inference API...")
-        _embeddings_model = HuggingFaceInferenceAPIEmbeddings(
-            api_key=os.getenv("HF_TOKEN"),
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
+        logger.info("Initialising embeddings via OpenRouter (text-embedding-3-small)...")
+        _embeddings_model = OpenAIEmbeddings(
+            model="openai/text-embedding-3-small",
+            openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+            openai_api_base="https://openrouter.ai/api/v1"
         )
         logger.info("Embeddings client ready.")
     return _embeddings_model

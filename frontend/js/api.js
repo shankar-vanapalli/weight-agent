@@ -256,6 +256,14 @@ async function askQuestion(query, k = null, conversationHistory = [], onChunk = 
         k = 5;
     }
 
+    // Get or create session ID for profile persistence
+    let sessionId = localStorage.getItem('kanya_session_id');
+    if (!sessionId) {
+        sessionId = crypto.randomUUID();
+        localStorage.setItem('kanya_session_id', sessionId);
+        console.log('Created new session ID:', sessionId);
+    }
+
     const url = `${API_CONFIG.baseUrl}/ask`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.timeout);
@@ -271,8 +279,8 @@ async function askQuestion(query, k = null, conversationHistory = [], onChunk = 
             },
             body: JSON.stringify({
                 query: query.trim(),
-                k: k,
-                conversation_history: conversationHistory
+                conversation_history: conversationHistory,
+                session_id: sessionId
             }),
             signal: controller.signal
         });
@@ -386,6 +394,88 @@ async function searchDocuments(query, k = 5) {
  */
 async function getApiInfo() {
     return await request('/', { method: 'GET' });
+}
+
+/**
+ * Create or update user profile
+ * @param {Object} profileData - User profile data
+ * @returns {Promise<Object>}
+ */
+async function saveProfile(profileData) {
+    let sessionId = localStorage.getItem('kanya_session_id');
+    if (!sessionId) {
+        sessionId = crypto.randomUUID();
+        localStorage.setItem('kanya_session_id', sessionId);
+    }
+
+    const response = await request('/profile', {
+        method: 'POST',
+        body: JSON.stringify({
+            session_id: sessionId,
+            profile: profileData
+        })
+    });
+
+    return response;
+}
+
+/**
+ * Get user profile
+ * @returns {Promise<Object|null>}
+ */
+async function getProfile() {
+    const sessionId = localStorage.getItem('kanya_session_id');
+    if (!sessionId) {
+        return null;
+    }
+
+    try {
+        const response = await request(`/profile/${sessionId}`, {
+            method: 'GET'
+        });
+        return response.profile;
+    } catch (error) {
+        if (error.status === 404) {
+            return null; // Profile doesn't exist yet
+        }
+        throw error;
+    }
+}
+
+/**
+ * Log weight entry
+ * @param {number} weightKg - Weight in kilograms
+ * @returns {Promise<Object>}
+ */
+async function logWeight(weightKg) {
+    const sessionId = localStorage.getItem('kanya_session_id');
+    if (!sessionId) {
+        throw new APIError('No session ID found. Please create a profile first.', 400);
+    }
+
+    const response = await request(`/profile/${sessionId}/weight`, {
+        method: 'POST',
+        body: JSON.stringify({ weight_kg: weightKg })
+    });
+
+    return response;
+}
+
+/**
+ * Get progress data (weight history, BMI, etc.)
+ * @returns {Promise<Object>}
+ */
+async function getProgress() {
+    const sessionId = localStorage.getItem('kanya_session_id');
+    if (!sessionId) {
+        throw new APIError('No session ID found. Please create a profile first.', 400);
+    }
+
+    const response = await request(`/profile/${sessionId}/progress`, {
+        method: 'GET'
+    });
+
+    return response.progress;
 }
 
 
@@ -524,6 +614,12 @@ window.API = {
     askQuestion,
     searchDocuments,
     getApiInfo,
+
+    // Profile Management
+    saveProfile,
+    getProfile,
+    logWeight,
+    getProgress,
 
     // Request Management
     cancelRequest,

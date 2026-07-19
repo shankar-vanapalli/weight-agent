@@ -88,15 +88,17 @@ metrics = Metrics()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ──
-    from ingestion import get_embeddings, get_vectorstore, check_vectorstore_health
-    logger.info("Warming up embeddings model...")
-    get_embeddings()
-    logger.info("Loading vector store...")
-    get_vectorstore()
-    vs_ok = check_vectorstore_health()
-    logger.info("Vector store ready: %s", vs_ok)
+    from llm import check_llm_health
+    from database import get_db
+    
+    logger.info("Initializing database...")
+    get_db()  # Initialize database
+    
+    llm_ok = check_llm_health()
+    logger.info("LLM API key configured: %s", llm_ok)
+    
     metrics.startup_time = time.time()
-    logger.info("Kanya Raasi is ready to serve.")
+    logger.info("Kanya Raasi is ready to serve (no-RAG mode).")
     yield
     # ── Shutdown ──
     logger.info("Shutting down gracefully...")
@@ -108,9 +110,9 @@ async def lifespan(app: FastAPI):
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
-    title="Kanya Raasi - Weight Loss AI Agent",
-    description="Production-grade RAG API for weight loss and nutrition advice",
-    version="3.0.0",
+    title="Kanya Raasi - AI Health Coach",
+    description="Evidence-based, personalized health coaching with web search",
+    version="4.0.0",
     lifespan=lifespan,
 )
 
@@ -175,8 +177,8 @@ async def request_middleware(request: Request, call_next):
 # ────────────────────────────────────────────────────────────────
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000, description="User query")
-    k: int = Field(default=5, ge=1, le=10, description="Number of documents to retrieve")
     conversation_history: list[dict] = Field(default_factory=list, description="Previous conversation context")
+    session_id: str | None = Field(default=None, description="User session ID for personalization")
 
     @field_validator('query')
     @classmethod
@@ -184,6 +186,22 @@ class QueryRequest(BaseModel):
         if not v or not v.strip():
             raise ValueError('Query cannot be empty')
         return v.strip()
+
+
+class ProfileData(BaseModel):
+    age: int | None = Field(default=None, ge=10, le=120)
+    gender: str | None = None
+    height_cm: float | None = Field(default=None, ge=50, le=300)
+    current_weight_kg: float | None = Field(default=None, ge=20, le=500)
+    target_weight_kg: float | None = Field(default=None, ge=20, le=500)
+    dietary_restrictions: list[str] = Field(default_factory=list)
+    activity_level: str | None = None
+    goal_type: str | None = None
+    notes: str | None = None
+
+
+class WeightEntry(BaseModel):
+    weight_kg: float = Field(..., ge=20, le=500)
 
 
 class SearchResponse(BaseModel):
@@ -198,8 +216,9 @@ class SearchResponse(BaseModel):
 @app.get("/api")
 def root(request: Request):
     return {
-        "service": "Kanya Raasi - Weight Loss AI Agent",
-        "version": "3.0.0",
+        "service": "Kanya Raasi - AI Health Coach",
+        "version": "4.0.0",
+        "mode": "no-RAG (web search + LLM knowledge)",
         "docs": "/docs",
         "health": "/health",
         "metrics": "/metrics",
@@ -208,18 +227,28 @@ def root(request: Request):
 
 @app.get("/health")
 def health_check(request: Request):
-    """Deep health check — verifies vector store and LLM API key."""
-    from ingestion import check_vectorstore_health, check_llm_health
+    """Deep health check — verifies LLM API key and database."""
+    from llm import check_llm_health
+    from database import get_db
 
-    vs_ok = check_vectorstore_health()
     llm_ok = check_llm_health()
-    overall = "healthy" if (vs_ok and llm_ok) else "degraded"
+    
+    # Check database
+    db_ok = False
+    try:
+        db = get_db()
+        db_ok = True
+    except:
+        pass
+    
+    overall = "healthy" if (llm_ok and db_ok) else "degraded"
 
     return {
         "status": overall,
-        "version": "3.0.0",
+        "version": "4.0.0",
+        "mode": "no-RAG (web search + LLM knowledge)",
         "checks": {
-            "vectorstore": "ok" if vs_ok else "unavailable",
+            "database": "ok" if db_ok else "unavailable",
             "llm_api_key": "configured" if llm_ok else "missing",
         },
         "uptime_seconds": round(time.time() - metrics.startup_time, 1) if metrics.startup_time else 0,
@@ -237,20 +266,51 @@ def get_metrics(request: Request):
 @limiter.limit(f"{os.getenv('RATE_LIMIT_PER_MINUTE', '30')}/minute")
 def ask_question(request: Request, body: QueryRequest):
     """Ask a question and get an AI-generated answer with streaming response."""
-    from ingestion import ask_with_stream
+    from llm import ask_with_stream
+    from database import get_db
 
     req_id = getattr(request.state, 'request_id', 'unknown')
-    logger.info("req=%s ask query=%s", req_id, body.query[:80])
+    logger.info("req=%s ask query=%s session=%s", req_id, body.query[:80], body.session_id)
 
+    # Get user profile and conversation history from database
+    user_profile = None
+    db_history = []
+    db = None
+    
+    if body.session_id:
+        try:
+            db = get_db()
+            # Ensure this session exists in the database (auto-create if new)
+            db.ensure_session_exists(body.session_id)
+            
+            user_profile = db.get_profile(body.session_id)
+            
+            # Load conversation history from database (last 30 messages)
+            db_history = db.get_conversation_history(body.session_id, limit=30)
+            logger.info("req=%s profile=%s db_history=%d msgs",
+                        req_id,
+                        "found" if user_profile else "empty",
+                        len(db_history))
+        except Exception as e:
+            logger.warning("Failed to load profile/history: %s", e)
+
+    # Use database history; fall back to frontend history only if DB is empty
+    conversation_history = db_history if db_history else body.conversation_history
+
+    # Store the full answer for saving to database later
+    full_answer = ""
+    
     def generate():
+        nonlocal full_answer
         metrics.active_streams += 1
         try:
             for chunk in ask_with_stream(
                 body.query,
-                body.k,
-                body.conversation_history
+                conversation_history,
+                user_profile
             ):
                 metrics.tokens_generated += 1
+                full_answer += chunk
                 yield chunk
         except Exception as e:
             logger.exception("req=%s streaming error", req_id)
@@ -258,6 +318,15 @@ def ask_question(request: Request, body: QueryRequest):
             yield f"Error: {str(e)}"
         finally:
             metrics.active_streams -= 1
+            
+            # Save conversation to database after streaming completes
+            if body.session_id and db and full_answer:
+                try:
+                    db.add_conversation_message(body.session_id, 'user', body.query)
+                    db.add_conversation_message(body.session_id, 'ai', full_answer)
+                    logger.info("req=%s saved conversation to DB", req_id)
+                except Exception as e:
+                    logger.warning("Failed to save conversation: %s", e)
 
     return StreamingResponse(
         generate(),
@@ -269,33 +338,106 @@ def ask_question(request: Request, body: QueryRequest):
     )
 
 
-@app.post("/search", response_model=SearchResponse,
-          responses={400: {"description": "Invalid request"}, 503: {"description": "Vector store unavailable"}, 500: {"description": "Server error"}})
+@app.post("/profile")
 @limiter.limit(f"{os.getenv('RATE_LIMIT_PER_MINUTE', '30')}/minute")
-def search_documents(request: Request, body: QueryRequest):
-    """Search for relevant documents without generating an AI answer."""
-    from ingestion import get_retriever
-
+def create_or_update_profile(request: Request, session_id: str, profile: ProfileData):
+    """Create or update a user profile."""
+    from database import get_db
+    
     req_id = getattr(request.state, 'request_id', 'unknown')
-    logger.info("req=%s search query=%s", req_id, body.query[:80])
+    logger.info("req=%s profile update session=%s", req_id, session_id)
+    
+    try:
+        db = get_db()
+        updated_profile = db.create_or_update_profile(session_id, profile.model_dump())
+        return {"status": "success", "profile": updated_profile}
+    except Exception as e:
+        logger.exception("req=%s profile update error", req_id)
+        raise HTTPException(status_code=500, detail=str(e))
 
-    retriever = get_retriever(body.k)
-    if not retriever:
-        raise HTTPException(status_code=503, detail="Vector store not available. Run ingestion first.")
 
-    docs = retriever.invoke(body.query)
+@app.get("/profile/{session_id}")
+@limiter.limit(f"{os.getenv('RATE_LIMIT_PER_MINUTE', '30')}/minute")
+def get_profile(request: Request, session_id: str):
+    """Retrieve a user profile."""
+    from database import get_db
+    
+    req_id = getattr(request.state, 'request_id', 'unknown')
+    logger.info("req=%s profile get session=%s", req_id, session_id)
+    
+    try:
+        db = get_db()
+        profile = db.get_profile(session_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        return {"status": "success", "profile": profile}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("req=%s profile get error", req_id)
+        raise HTTPException(status_code=500, detail=str(e))
 
-    results = [
-        {
-            "content": doc.page_content[:500],
-            "source": doc.metadata.get('source', 'Unknown'),
-            "page": doc.metadata.get('page', 'Unknown')
-        }
-        for doc in docs
-    ]
 
-    logger.info("req=%s search found %d results", req_id, len(results))
-    return SearchResponse(query=body.query, results=results)
+@app.post("/profile/{session_id}/weight")
+@limiter.limit(f"{os.getenv('RATE_LIMIT_PER_MINUTE', '30')}/minute")
+def log_weight(request: Request, session_id: str, weight: WeightEntry):
+    """Log a weight entry for progress tracking."""
+    from database import get_db
+    
+    req_id = getattr(request.state, 'request_id', 'unknown')
+    logger.info("req=%s weight log session=%s weight=%s", req_id, session_id, weight.weight_kg)
+    
+    try:
+        db = get_db()
+        success = db.log_weight(session_id, weight.weight_kg)
+        if not success:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        return {"status": "success", "weight_kg": weight.weight_kg}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("req=%s weight log error", req_id)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/profile/{session_id}/progress")
+@limiter.limit(f"{os.getenv('RATE_LIMIT_PER_MINUTE', '30')}/minute")
+def get_progress(request: Request, session_id: str):
+    """Get progress data for charts and analytics."""
+    from database import get_db
+    
+    req_id = getattr(request.state, 'request_id', 'unknown')
+    logger.info("req=%s progress get session=%s", req_id, session_id)
+    
+    try:
+        db = get_db()
+        progress = db.get_progress(session_id)
+        if 'error' in progress:
+            raise HTTPException(status_code=404, detail=progress['error'])
+        return {"status": "success", "progress": progress}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("req=%s progress get error", req_id)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/profile/{session_id}/conversations")
+@limiter.limit(f"{os.getenv('RATE_LIMIT_PER_MINUTE', '30')}/minute")
+def clear_conversations(request: Request, session_id: str):
+    """Clear conversation history (keep profile)."""
+    from database import get_db
+    
+    req_id = getattr(request.state, 'request_id', 'unknown')
+    logger.info("req=%s clear conversations session=%s", req_id, session_id)
+    
+    try:
+        db = get_db()
+        db.clear_conversation_history(session_id)
+        return {"status": "success", "message": "Conversation history cleared"}
+    except Exception as e:
+        logger.exception("req=%s clear conversations error", req_id)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ────────────────────────────────────────────────────────────────
